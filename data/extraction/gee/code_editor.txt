@@ -1,0 +1,144 @@
+// DATASET: Sentinel-3 OLCI EFR: Ocean and Land Color Instrument Earth Observation Full Resolution
+// ImageCollection ID: COPERNICUS/S3/OLCI
+// DATASET URL: https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S3_OLCI
+
+// EXPLORE FIRST IMAGE
+// Load image collection.
+var dataset = ee.ImageCollection('COPERNICUS/S3/OLCI');
+// function applyScaleFactors(image) {
+//   var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+//   var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+//   return image.addBands(opticalBands, null, true)
+//               .addBands(thermalBands, null, true);
+// }
+// // Scale all images.
+// dataset = dataset.map(applyScaleFactors);
+// Get first image.
+var img1 = dataset.first();
+print(img1);
+
+// // View on map.
+// var visualization = {
+//   bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+//   min: 0.0,
+//   max: 0.3,
+// };
+// Map.setCenter(-114.2579, 38.9275, 8);
+// Map.addLayer(dataset, visualization, 'True Color (432)');
+
+
+// CONSTANTS
+var YEARS = [
+  1938.0, 1945.0, 1954.0, 1962.0, 1964.0, 1970.0, 1971.0, 1972.0, 
+  1980.0, 1982.0, 1985.0, 1986.0, 
+  1987.0, 1988.0, 1989.0, 1990.0, 1991.0, 1992.0, 
+  1993.0, 1994.0, 1995.0, 1996.0, 1997.0, 1998.0, 
+  1999.0, 2000.0, 2001.0, 2002.0, 2003.0, 2004.0, 
+  2005.0, 2006.0, 2007.0, 2008.0, 2009.0, 2010.0, 
+  2011.0, 2012.0, 2013.0, 2014.0, 2015.0,  
+  2016.0, 2017.0, 2018.0, 2019.0, 2020.0, 2021.0, 
+  2022.0, 2023.0, 2024.0, 2025
+];
+
+var REDUCER_YEAR = ee.Reducer.mean() // mean
+                    // .combine(ee.Reducer.percentile([5, 50, 95]), '', true); // 5th, 50th, 95th percetile
+                     .combine(ee.Reducer.stdDev(), '', true); // standard deviation
+                     
+var ROI = [ // lon min, lat min, lon max, lat max
+  ee.Geometry.BBox(-30, 26, 15, 56),
+  ee.Geometry.BBox(-115, 20, -101, 33),
+  ee.Geometry.BBox(113, -45, 153, 41)
+]
+
+// HELPER FUNCTIONS
+function processAndExportYear(year, num_years, bands, reducer, crs, resolution, 
+                              suffix, dir_dst, img_col, bb, transforms) {
+  /**
+   * Processes and exports data for a single year.
+   * @parameter year: Year.
+   * @parameter num_years: No. of years to look ahead.
+   * @parameter bands: Bands to export.
+   * @parameter reducer: Type of reducer to apply per location for the year.
+   * @parameter crs: Coordinate reference system of the image.
+   * @parameter resolution: Image scale.
+   * @parameter suffix: Suffix to add to end of saved filename.
+   * @parameter dir_dst: Name of destination directory in drive.
+   * @parameter img_col: Image collection ID.
+   * @paramter bb: Region to consider such as
+   *               ee.Geometry.BBox(-180, -90, 180, 90)
+   *               for the entire surface.
+   * @parameter transforms: List of preprocessing functions to 
+   *                        apply to all images.
+   */
+  
+  // Define date range.
+  var dateStart = String(year) + "-01-01";
+  var dateEnd = String(year + num_years) + "-01-01";
+  
+  // Get image collection for the year
+  var imgCol = ee.ImageCollection(img_col)
+                .filterDate(dateStart, dateEnd)
+                .filterBounds(bb);
+                
+  // Apply transformation functions.
+  for (var i = 0; i < transforms.length; i++) {
+    imgCol = imgCol.map(transforms[i]);
+  }
+  
+  // Select bands.
+  imgCol = imgCol.select(bands);
+  
+  // Reduce the image collection
+  var count = imgCol.size();
+  var img = ee.Image(ee.Algorithms.If(
+    count.gt(0), // Guard against empty collections.
+    imgCol.reduce(reducer),
+    ee.Image.constant(0).rename(bands) // Dummy image placeholder.
+  ));
+  
+  // Create image export task.
+  var filename = year + "_" + suffix;
+  var task = Export.image.toDrive({
+    image: img,
+    description: filename,
+    region: bb,
+    crs: crs,
+    scale: resolution,
+    maxPixels: 1e13,
+    folder: dir_dst,
+    fileNamePrefix: filename,
+    skipEmptyTiles: true
+  });
+}
+
+// function applyScaleFactors(image) {
+//   /** Function to scale band pixels to actual values. 
+//       @parameter image: Unscaled ImageCollection image.
+//       @return image: Scaled ImageCollection image.
+//   **/
+//   var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+//   var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+//   return image.addBands(opticalBands, null, true)
+//               .addBands(thermalBands, null, true);
+// }
+
+// PROCESS DATA FOR ALL REGIONS OF INTEREST ONE YEAR AT A TIME
+for (var i = 0; i < ROI.length; i++) {
+  var bounding_box = ROI[i];
+  for (var j = 0; j < YEARS.length; j++) {
+    var year = YEARS[j];
+    processAndExportYear(
+      year, // Starting year.
+      1, // No. of years to consider.
+      ['Oa08_radiance', 'Oa17_radiance', 'Oa21_radiance'], // Bands
+      REDUCER_YEAR, // Reduction type.
+      "EPSG:3857", // CRS
+      5000, // Resolution
+      "roi" + i, // Saved file suffix.
+      "COPERNICUS-S3-OLCI", // Folder in Drive.
+      'COPERNICUS/S3/OLCI', // ImageCollection ID
+      bounding_box, // Region of interest.
+      [] // Image transformation functions.
+    ); 
+  }
+}

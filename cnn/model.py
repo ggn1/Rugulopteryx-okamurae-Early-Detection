@@ -47,6 +47,14 @@ class RoCNN(torch.nn.Module):
             ),
             torch.nn.ReLU(inplace=True)
         )
+        self.cv4 = torch.nn.Sequential(
+            torch.nn.Conv2d( # 15 X 15 X 64 => 15 X 15 X 64
+                in_channels=64, out_channels=64, 
+                padding=1, kernel_size=3, stride=(1, 1), 
+                dtype=torch.float32, bias=True
+            ),
+            torch.nn.ReLU(inplace=True)
+        )
 
         # Max Pooling Layers.
         # 31 X 31 X 32 => 15 X 15 X 32
@@ -56,14 +64,17 @@ class RoCNN(torch.nn.Module):
 
         # Fully Connected Layers.
         self.fc1 =  torch.nn.Sequential( # 3136 => 512
-            torch.nn.Linear(7*7*64, 512, dtype=torch.float32, bias=True),
+            torch.nn.Linear(3136, 512, dtype=torch.float32, bias=True),
             torch.nn.ReLU(inplace=True)
         )
-        self.fc2 =  torch.nn.Sequential(
+        self.fc2 =  torch.nn.Sequential( # 512 => 64
             torch.nn.Linear(512, 64, dtype=torch.float32, bias=True),
             torch.nn.ReLU(inplace=True)
-        )     
-        self.fc3 =  torch.nn.Linear(64, 1, dtype=torch.float32, bias=True)
+        )
+        self.fc3 =  torch.nn.Sequential( # 64 => 1
+            torch.nn.Linear(64, 1, dtype=torch.float32, bias=True),
+            torch.nn.Sigmoid()
+        )
 
         # Flattening layers.
         self.flatten = torch.nn.Flatten()
@@ -78,20 +89,24 @@ class RoCNN(torch.nn.Module):
         torch.Tensor -- Output tensor of shape (B, 1).
         """
         # Convolutional Layers with ReLU activations.
-        x = self.cv1(x)
-        x = self.mp1(x)
-        x = self.cv2(x)
-        x = self.cv3(x)
-        x = self.mp2(x)
+        
+        # x [B, 6, 64, 64]
+        
+        x = self.cv1(x) # [B, 32, 31, 31]
+        x = self.mp1(x) # [B, 32, 15, 15]
+        x = self.cv2(x) # [B, 64, 15, 15]
+        x = self.cv3(x) # [B, 64, 15, 15]
+        x = self.cv4(x) # [B, 64, 15, 15]
+        x = self.mp2(x) # [B, 64, 7, 7]
 
         # Flatten the tensor for Fully Connected Layers.
-        x = self.flatten(x)
+        x = self.flatten(x) # [B, 3136]
 
         # Fully Connected Layers with ReLU activations.
-        x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.fc3(x)
-
+        x = self.fc1(x) # [B, 512]
+        x = self.fc2(x) # [B, 64]
+        x = self.fc3(x) # [B, 1]
+        
         return x
     
 def save_model(model, path, overwrite=False):
