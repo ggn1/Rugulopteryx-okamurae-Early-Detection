@@ -128,7 +128,7 @@ def save_sample_predictions(model, dataset, device,
             titles = [
                 "Input timestep t",
                 "True timestep (t + 1)",
-                "Predicted timestep (t + 2)"
+                "Predicted timestep (t + 1)"
             ]
             images = [input_mask, true_mask, pred_bin]
 
